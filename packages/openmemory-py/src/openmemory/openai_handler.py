@@ -3,7 +3,23 @@ import logging
 import asyncio
 import json
 
+from .core.config import env
+
 logger = logging.getLogger("openmemory.client")
+
+_CONTEXT_PREFIX = {
+    "pt": "Contexto relevante da memória:",
+    "en": "Relevant context from memory:",
+}
+
+
+def _ctx_prefix() -> str:
+    """Return the localized context prefix label based on `env.lang`.
+
+    Falls back to English for any `env.lang` value not in `_CONTEXT_PREFIX`.
+    """
+    return _CONTEXT_PREFIX.get(env.lang, _CONTEXT_PREFIX["en"])
+
 
 class OpenAIRegistrar:
     def __init__(self, memory_instance):
@@ -31,7 +47,7 @@ class OpenAIRegistrar:
                                 context = await memory.search(query, user_id=uid, limit=3)
                                 if context:
                                     ctx_text = "\n".join([f"- {m['content']}" for m in context])
-                                    instr = f"\n\nrelevant context from memory:\n{ctx_text}"
+                                    instr = f"\n\n{_ctx_prefix()}\n{ctx_text}"
                                     if messages[0].get("role") == "system":
                                         messages[0]["content"] += instr
                                     else:
@@ -66,7 +82,7 @@ class OpenAIRegistrar:
                                         context = asyncio.run(memory.search(query, user_id=uid, limit=3))
                                     if context:
                                         ctx_text = "\n".join([f"- {m['content']}" for m in context])
-                                        instr = f"\n\nrelevant context from memory:\n{ctx_text}"
+                                        instr = f"\n\n{_ctx_prefix()}\n{ctx_text}"
                                         if messages[0].get("role") == "system":
                                             messages[0]["content"] += instr
                                         else:
