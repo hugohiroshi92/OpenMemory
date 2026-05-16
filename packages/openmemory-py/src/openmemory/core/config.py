@@ -59,6 +59,9 @@ class EnvConfig:
         self.aws_access_key_id = get("ai", "aws_access_key_id", "AWS_ACCESS_KEY_ID", None)
         self.aws_secret_access_key = get("ai", "aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", None)
 
+        self.s3_bucket = get("ai", "s3_bucket", "OPENMEMORY_S3_BUCKET", os.getenv("OPENMEMORY_S3_BUCKET"))
+        self.s3_index_name = get("ai", "s3_index_name", "OPENMEMORY_S3_INDEX_NAME", os.getenv("OPENMEMORY_S3_INDEX_NAME"))
+
         self.siray_key = get("ai", "siray_key", "SIRAY_API_TOKEN", "") or os.getenv("OM_SIRAY_API_TOKEN")
         self.siray_base_url = get("ai", "siray_base", "OM_SIRAY_BASE_URL", "https://api.siray.ai/v1")
         self.siray_model = get("ai", "siray_model", "OM_SIRAY_MODEL", None)

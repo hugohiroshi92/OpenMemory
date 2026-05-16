@@ -12,6 +12,7 @@ import {
     DEFAULT_VECTOR_TABLE,
 } from "./identifiers";
 import { resolvePgSsl } from "./pg_ssl";
+import { S3VectorStore } from "./vector/s3";
 
 const LEGACY_SQLITE_VECTOR_TABLE = "vectors";
 
@@ -264,6 +265,9 @@ if (is_pg) {
         if (env.vector_backend === "valkey") {
             vector_store = new ValkeyVectorStore();
             console.error("[DB] Using Valkey VectorStore");
+        } else if (env.vector_backend === "s3") {
+            vector_store = new S3VectorStore();
+            console.error("[DB] Using S3 VectorStore (S3 Vectors)");
         } else {
             // Pass the validated, schema-qualified identifier (with quotes)
             // straight through; PostgresVectorStore interpolates it as-is.
@@ -647,6 +651,9 @@ if (is_pg) {
     if (env.vector_backend === "valkey") {
         vector_store = new ValkeyVectorStore();
         console.error("[DB] Using Valkey VectorStore");
+    } else if (env.vector_backend === "s3") {
+        vector_store = new S3VectorStore();
+        console.error("[DB] Using S3 VectorStore (S3 Vectors)");
     } else {
         vector_store = new PostgresVectorStore(
             { run_async, get_async, all_async },

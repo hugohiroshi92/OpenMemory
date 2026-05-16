@@ -104,6 +104,15 @@ def get_vector_store() -> VectorStore:
         logger.info(f"Using ValkeyVectorStore at {url}")
         return ValkeyVectorStore(url)
 
+    elif backend == "s3":
+        bucket = os.getenv("OPENMEMORY_S3_BUCKET")
+        prefix = os.getenv("OPENMEMORY_S3_INDEX_NAME", "om-vectors/")
+        if not bucket:
+            raise ValueError("OPENMEMORY_S3_BUCKET environment variable must be set when using S3 vector store")
+        from .vector.s3 import S3VectorStore
+        logger.info(f"Using S3VectorStore with bucket '{bucket}' and prefix '{prefix}'")
+        return S3VectorStore(bucket, prefix)
+
     else:
         logger.info("Using SQLiteVectorStore")
         return SQLiteVectorStore()

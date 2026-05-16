@@ -58,9 +58,12 @@ export const env = {
     openai_model: process.env.OM_OPENAI_MODEL,
     gemini_key:
         process.env.GEMINI_API_KEY || process.env.OM_GEMINI_API_KEY || "",
-    AWS_REGION: process.env.AWS_REGION || "",
+    AWS_REGION: process.env.AWS_REGION || "us-east-1",
     AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || "",
     AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || "",
+    AWS_SESSION_TOKEN: process.env.AWS_SESSION_TOKEN || "",
+    s3_bucket: process.env.OPENMEMORY_S3_BUCKET || "",
+    s3_index_name: process.env.OPENMEMORY_S3_INDEX_NAME || "om-vectors",
     siray_key:
         process.env.SIRAY_API_TOKEN || process.env.OM_SIRAY_API_TOKEN || "",
     siray_base_url: str(

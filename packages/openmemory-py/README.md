@@ -129,6 +129,11 @@ os.environ['OM_DB_PATH'] = './data/memory.sqlite'
 os.environ['OM_TIER'] = 'deep'
 os.environ['OM_EMBEDDINGS'] = 'ollama'
 
+# S3 Vector Storage (optional)
+os.environ['OPENMEMORY_VECTOR_STORE'] = 's3'
+os.environ['OPENMEMORY_S3_BUCKET'] = 'my-vector-bucket'
+# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION or ECS IAM Role will be used automatically
+
 mem = Memory()
 
 # or via constructor
