@@ -201,6 +201,23 @@ The Python side still uses a single `tests/test_omnibus.py` as the canonical par
 
 > **CI is currently broken on the Node side.** `.github/workflows/ci.yml` still runs `npx tsx tests/test_omnibus.ts`, but that file was deleted during the Phase-4 hardening migration to vitest. The replacement spec is `tests/omnibus.test.ts` — when fixing CI, swap the step to `npm test` (or `npx vitest run tests/omnibus.test.ts`). The Python job (`python -m pytest tests/test_omnibus.py -v`) is still correct.
 
+### Background-jobs mode (`OM_BG_JOBS`)
+
+The JS server has three startup modes selected by `OM_BG_JOBS`:
+
+- `api` *(default)* — full HTTP server + background loops (decay, prune,
+  reflection, user-summary). Matches the single-container behavior used
+  by `docker compose up` and local dev.
+- `off` — full HTTP server, no background loops. Used by stateless API
+  replicas behind a load balancer; safe to scale horizontally.
+- `worker` — only `/health` is served, all background loops run. Used by
+  the singleton worker container in production.
+
+The split is implemented in `packages/openmemory-js/src/server/bg_jobs.ts`
+(job startup) and gated in `src/server/index.ts`. The
+`docker-compose.yml` ships a commented-out `openmemory-worker` service
+that mirrors the production shape locally.
+
 ## Conventions
 
 - **TypeScript:** 2-space indent, semicolons, Prettier (`npm run format`). No ESLint config in the SDK package (the dashboard has its own).

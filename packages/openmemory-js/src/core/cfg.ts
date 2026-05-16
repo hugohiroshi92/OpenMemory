@@ -5,6 +5,20 @@ dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 const num = (v: string | undefined, d: number) => Number(v) || d;
 const str = (v: string | undefined, d: string) => v || d;
 const bool = (v: string | undefined) => v === "true";
+type BgJobsMode = "api" | "off" | "worker";
+const BG_JOBS_VALUES: readonly BgJobsMode[] = ["api", "off", "worker"];
+const parse_bg_jobs = (v: string | undefined): BgJobsMode => {
+    if (!v) return "api";
+    const normalized = v.toLowerCase();
+    if ((BG_JOBS_VALUES as readonly string[]).includes(normalized)) {
+        return normalized as BgJobsMode;
+    }
+    console.warn(
+        `[OpenMemory] Invalid OM_BG_JOBS="${v}". ` +
+            `Expected one of: ${BG_JOBS_VALUES.join(", ")}. Falling back to "api".`,
+    );
+    return "api";
+};
 type tier = "fast" | "smart" | "deep" | "hybrid";
 
 const get_tier = (): tier => {
@@ -22,6 +36,7 @@ const tier_max_active = { fast: 32, smart: 64, deep: 128, hybrid: 64 };
 
 export const env = {
     port: num(process.env.OM_PORT, 8080),
+    bg_jobs: parse_bg_jobs(process.env.OM_BG_JOBS),
     db_path: str(
         process.env.OM_DB_PATH,
         path.resolve(__dirname, "../../data/openmemory.sqlite"),

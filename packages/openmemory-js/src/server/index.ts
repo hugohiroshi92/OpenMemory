@@ -1,14 +1,12 @@
 import { server } from "./server";
 import { env, tier } from "../core/cfg";
-import { run_decay_process, prune_weak_waypoints } from "../memory/hsg";
 import { mcp } from "../ai/mcp";
 import { routes } from "./routes";
 import {
     authenticate_api_request,
     log_authenticated_request,
 } from "./middleware/auth";
-import { start_reflection } from "../memory/reflect";
-import { start_user_summary_reflection } from "../memory/user_summary";
+import { start_background_jobs } from "./bg_jobs";
 import { sendTelemetry } from "../core/telemetry";
 import { req_tracker_mw } from "./routes/dashboard";
 import { DbInitError } from "../core/identifiers";
@@ -49,100 +47,86 @@ if (env.emb_kind !== "synthetic" && (tier === "hybrid" || tier === "fast")) {
     );
 }
 
-app.use(req_tracker_mw());
+if (env.bg_jobs === "worker") {
+    console.log(`[BG_JOBS] Mode=worker — HTTP stripped to /health only`);
 
-app.use((req: any, res: any, next: any) => {
-    const origin = req.headers.origin;
-    const isIdeRoute = (req.path || req.url || "").startsWith("/api/ide/");
-    const allowIdeOrigin =
-        env.ide_mode &&
-        typeof origin === "string" &&
-        env.ide_allowed_origins.includes(origin);
+    // Minimal /health for the container healthcheck. No auth, no CORS,
+    // no routes, no MCP. Worker exists to run background jobs.
+    app.get("/health", (_req: any, res: any) => {
+        res.status(200).json({ ok: true, mode: "worker" });
+    });
 
-    if (isIdeRoute && allowIdeOrigin) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Vary", "Origin");
-    } else {
-        res.setHeader("Access-Control-Allow-Origin", "*");
-    }
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    );
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type,Authorization,x-api-key",
-    );
-    if (req.method === "OPTIONS") {
-        res.status(200).end();
-        return;
-    }
-    next();
-});
+    console.log(`[BG_JOBS] Starting background jobs`);
+    start_background_jobs();
 
-app.use(authenticate_api_request);
-
-if (process.env.OM_LOG_AUTH === "true") {
-    app.use(log_authenticated_request);
-}
-
-routes(app);
-
-mcp(app);
-if (env.mode === "langgraph") {
-    console.log("[MODE] LangGraph integration enabled");
-}
-
-const decayIntervalMs = env.decay_interval_minutes * 60 * 1000;
-console.log(
-    `[DECAY] Interval: ${env.decay_interval_minutes} minutes (${decayIntervalMs / 1000}s)`,
-);
-
-setInterval(async () => {
-    console.log("[DECAY] Running HSG decay process...");
-    try {
-        const result = await run_decay_process();
+    console.log(`[SERVER] Starting on port ${env.port} (worker)`);
+    app.listen(env.port, () => {
         console.log(
-            `[DECAY] Completed: ${result.decayed}/${result.processed} memories updated`,
-        );
-    } catch (error) {
-        console.error("[DECAY] Process failed:", error);
-    }
-}, decayIntervalMs);
-setInterval(
-    async () => {
-        console.log("[PRUNE] Pruning weak waypoints...");
-        try {
-            const pruned = await prune_weak_waypoints();
-            console.log(`[PRUNE] Completed: ${pruned} waypoints removed`);
-        } catch (error) {
-            console.error("[PRUNE] Failed:", error);
-        }
-    },
-    7 * 24 * 60 * 60 * 1000,
-);
-setTimeout(() => {
-    run_decay_process()
-        .then((result: any) => {
-            console.log(
-                `[INIT] Initial decay: ${result.decayed}/${result.processed} memories updated`,
-            );
-        })
-        .catch(console.error);
-}, 3000);
-
-start_reflection();
-start_user_summary_reflection();
-
-console.log(`[SERVER] Starting on port ${env.port}`);
-app.listen(env.port, () => {
-    console.log(`[SERVER] Running on http://localhost:${env.port}`);
-    sendTelemetry().catch((err: any) => {
-        // Telemetry must never crash the server. Surface the failure
-        // to operators so silent breakage doesn't accumulate.
-        console.error(
-            "[TELEMETRY] sendTelemetry failed:",
-            err && err.stack ? err.stack : err,
+            `[SERVER] Worker running on http://localhost:${env.port}`,
         );
     });
-});
+} else {
+    app.use(req_tracker_mw());
+
+    app.use((req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isIdeRoute = (req.path || req.url || "").startsWith("/api/ide/");
+        const allowIdeOrigin =
+            env.ide_mode &&
+            typeof origin === "string" &&
+            env.ide_allowed_origins.includes(origin);
+
+        if (isIdeRoute && allowIdeOrigin) {
+            res.setHeader("Access-Control-Allow-Origin", origin);
+            res.setHeader("Vary", "Origin");
+        } else {
+            res.setHeader("Access-Control-Allow-Origin", "*");
+        }
+        res.setHeader(
+            "Access-Control-Allow-Methods",
+            "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        );
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "Content-Type,Authorization,x-api-key",
+        );
+        if (req.method === "OPTIONS") {
+            res.status(200).end();
+            return;
+        }
+        next();
+    });
+
+    app.use(authenticate_api_request);
+
+    if (process.env.OM_LOG_AUTH === "true") {
+        app.use(log_authenticated_request);
+    }
+
+    routes(app);
+
+    mcp(app);
+    if (env.mode === "langgraph") {
+        console.log("[MODE] LangGraph integration enabled");
+    }
+
+    if (env.bg_jobs !== "off") {
+        console.log(`[BG_JOBS] Mode=${env.bg_jobs} — starting background jobs`);
+        start_background_jobs();
+    } else {
+        console.log(`[BG_JOBS] Mode=off — skipping background jobs (API replica)`);
+    }
+
+    console.log(`[SERVER] Starting on port ${env.port}`);
+    app.listen(env.port, () => {
+        console.log(`[SERVER] Running on http://localhost:${env.port}`);
+        sendTelemetry().catch((err: any) => {
+            // Telemetry must never crash the server. Surface the failure
+            // to operators so silent breakage doesn't accumulate.
+            console.error(
+                "[TELEMETRY] sendTelemetry failed:",
+                err && err.stack ? err.stack : err,
+            );
+        });
+    });
+}
