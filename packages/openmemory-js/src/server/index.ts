@@ -1,14 +1,12 @@
 import { server } from "./server";
 import { env, tier } from "../core/cfg";
-import { run_decay_process, prune_weak_waypoints } from "../memory/hsg";
 import { mcp } from "../ai/mcp";
 import { routes } from "./routes";
 import {
     authenticate_api_request,
     log_authenticated_request,
 } from "./middleware/auth";
-import { start_reflection } from "../memory/reflect";
-import { start_user_summary_reflection } from "../memory/user_summary";
+import { start_background_jobs } from "./bg_jobs";
 import { sendTelemetry } from "../core/telemetry";
 import { req_tracker_mw } from "./routes/dashboard";
 import { DbInitError } from "../core/identifiers";
@@ -93,46 +91,7 @@ if (env.mode === "langgraph") {
     console.log("[MODE] LangGraph integration enabled");
 }
 
-const decayIntervalMs = env.decay_interval_minutes * 60 * 1000;
-console.log(
-    `[DECAY] Interval: ${env.decay_interval_minutes} minutes (${decayIntervalMs / 1000}s)`,
-);
-
-setInterval(async () => {
-    console.log("[DECAY] Running HSG decay process...");
-    try {
-        const result = await run_decay_process();
-        console.log(
-            `[DECAY] Completed: ${result.decayed}/${result.processed} memories updated`,
-        );
-    } catch (error) {
-        console.error("[DECAY] Process failed:", error);
-    }
-}, decayIntervalMs);
-setInterval(
-    async () => {
-        console.log("[PRUNE] Pruning weak waypoints...");
-        try {
-            const pruned = await prune_weak_waypoints();
-            console.log(`[PRUNE] Completed: ${pruned} waypoints removed`);
-        } catch (error) {
-            console.error("[PRUNE] Failed:", error);
-        }
-    },
-    7 * 24 * 60 * 60 * 1000,
-);
-setTimeout(() => {
-    run_decay_process()
-        .then((result: any) => {
-            console.log(
-                `[INIT] Initial decay: ${result.decayed}/${result.processed} memories updated`,
-            );
-        })
-        .catch(console.error);
-}, 3000);
-
-start_reflection();
-start_user_summary_reflection();
+start_background_jobs();
 
 console.log(`[SERVER] Starting on port ${env.port}`);
 app.listen(env.port, () => {
