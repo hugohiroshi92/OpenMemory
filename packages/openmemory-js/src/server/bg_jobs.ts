@@ -42,9 +42,9 @@ export function start_background_jobs(): void {
 
     setTimeout(() => {
         run_decay_process()
-            .then((result: any) => {
+            .then(({ decayed, processed }) => {
                 console.log(
-                    `[INIT] Initial decay: ${result.decayed}/${result.processed} memories updated`,
+                    `[INIT] Initial decay: ${decayed}/${processed} memories updated`,
                 );
             })
             .catch(console.error);
