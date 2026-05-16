@@ -9,14 +9,17 @@
 
 ## 1. Goal
 
-Run the OpenMemory JS server (port 8080) horizontally on AWS ECS Fargate, with N stateless API replicas behind an Application Load Balancer (ALB) and a separate singleton worker container for background jobs. All shared state lives in managed services (RDS Postgres for metadata, S3 Vectors for vectors).
+Prepare the OpenMemory JS server (port 8080) to run horizontally on AWS ECS Fargate, with N stateless API replicas behind an Application Load Balancer (ALB) and a separate singleton worker container for background jobs. All shared state would live in managed services (RDS Postgres for metadata, S3 Vectors for vectors).
 
-The deployment must:
+**Scope clarification:** the deliverable is *deployable artifacts* — code changes + Terraform — not an active AWS deployment. No `terraform apply` against real AWS happens as part of this work. The Terraform must validate (`terraform init && terraform validate && terraform plan` against a dummy state) and the code must run locally, but actual cluster provisioning and cutover are explicitly deferred to whenever the project decides to flip the switch.
 
-- Scale API replicas by CPU/RPS without breaking decay, prune, reflection, or user-summary jobs.
+The prepared artifacts must:
+
+- Scale API replicas by CPU/RPS without breaking decay, prune, reflection, or user-summary jobs *when* eventually deployed.
 - Stay compatible with the existing public HTTP/MCP API and the local `docker-compose.yml` workflow.
 - Keep the change surface in the product code minimal — the scaling-aware logic is a single new env var (`OM_BG_JOBS`) plus an early-return in `src/server/index.ts`.
-- Ship as Terraform under `infra/terraform/` so the AWS topology is reviewable in PRs.
+- Ship Terraform under `infra/terraform/` so the AWS topology is reviewable in PRs and applyable on demand.
+- Include a `README.md` in `infra/terraform/` documenting prerequisites, the apply sequence, and what to decide at apply time (region, ACM cert, RDS sizing).
 
 ## 2. Non-goals
 
@@ -251,17 +254,31 @@ Task definitions reference these via `secrets` (mapped to env vars at container 
   - Worker desiredCount != runningCount for > 10 min (singleton health)
   - RDS connections > 80% of max
 
-## 7. Migration / rollout
+## 7. Delivery phases (what this work produces)
 
-Phased rollout, each step independently verifiable:
+The work is split into PRs each independently mergeable. **No AWS apply happens in any of these phases** — the Terraform is written, validated locally, and committed. Actual `terraform apply` is a separate decision made by the operator when the project is ready to deploy.
 
-1. **Code change (PR 1):** add `OM_BG_JOBS` flag and the `index.ts` gating. Update `docker-compose.yml`. Land vitest spec. Defaults preserve current behavior — this PR is mergeable on its own with no infra.
-2. **Terraform skeleton (PR 2):** `network`, `ecr`, `rds`, `secrets` modules + dev env. Apply against a dev AWS account. Validate RDS reachability and that `npm run migrate` runs against it from a one-shot ECS task.
-3. **Terraform services (PR 3):** `ecs_cluster`, `ecs_api`, `ecs_worker`, `alb`. Apply to dev. Smoke test: `curl https://<alb>/health`, post a memory, query it, watch worker CloudWatch logs to confirm decay runs there and **not** in API logs.
-4. **Prod env (PR 4):** clone dev env folder, switch sizes (Multi-AZ RDS, larger API min/max), apply.
-5. **Cutover:** point production DNS to the prod ALB. Old single-container deployment can stay running in parallel during validation, then be torn down.
+1. **Code change (PR 1):** add `OM_BG_JOBS` flag and the `index.ts` gating. Update `docker-compose.yml`. Land vitest spec. Defaults preserve current behavior — this PR is mergeable on its own with no infra. Verified by: `npm run typecheck`, `npm test`, manual `docker compose up` with each `OM_BG_JOBS` value.
+2. **Terraform foundation (PR 2):** `network`, `ecr`, `rds`, `secrets`, `alb` modules + dev env wiring. Verified by: `terraform fmt -check`, `terraform init` (with local backend for review), `terraform validate`, `terraform plan` against a placeholder tfvars.
+3. **Terraform services (PR 3):** `ecs_cluster`, `ecs_api`, `ecs_worker` modules. Verified by: `terraform validate` and `terraform plan` showing the expected resource graph (ALB + 2 services + 2 task defs + autoscaling target).
+4. **Prod env scaffolding (PR 4):** clone the dev env folder into a `prod/` env with prod-shaped values (Multi-AZ RDS, larger API min/max, longer log retention). `terraform plan`-clean. Tfvars stay as `.example` files — the real prod values are filled in at apply time.
+5. **Operator runbook (PR 5):** `infra/terraform/README.md` covering: AWS prerequisites (Route53 zone, ACM cert, S3 state bucket, DynamoDB lock table), the apply order, the open decisions from §9, and the rollback procedure. This is the document the operator reads when they decide to actually deploy.
 
-Rollback at any step is `terraform destroy` of that env, or for the code PR, a simple `git revert`.
+**Definition of done for this whole effort:**
+- All 5 PRs merged
+- `terraform plan` clean in `envs/dev` and `envs/prod` against placeholder tfvars
+- Local `docker compose up` still works exactly as before for someone who clones the repo today
+- `npm test` and `npm run typecheck` green in `packages/openmemory-js`
+
+**Out of this effort but documented for whoever runs the apply later:**
+- Creating the AWS account, IAM bootstrap user, S3 state bucket, DynamoDB lock table
+- Provisioning the ACM cert, Route53 zone, VPC peering (if any)
+- Running `terraform apply` against real environments
+- Smoke tests against a live ALB
+- DNS cutover
+- Cost monitoring setup beyond what Terraform provisions
+
+Rollback for any merged PR is a `git revert`. There is no live state to roll back because nothing was applied.
 
 ## 8. Risks & mitigations
 
@@ -274,10 +291,13 @@ Rollback at any step is `terraform destroy` of that env, or for the code PR, a s
 | Cold-start latency on new API tasks during autoscale | Health check grace period 30s (matches Dockerfile `HEALTHCHECK --start-period=30s`). Scale-out is reactive; if we see latency spikes, switch to scheduled scaling for known peak windows. |
 | Image size pulls slow Fargate start | Existing Dockerfile is already multi-stage and prunes dev deps — acceptable for now. Revisit if cold start > 60s. |
 
-## 9. Open questions for review
+## 9. Decide-at-apply-time
 
-1. **Region:** assumed `us-east-1` to match the existing S3 default. If prod traffic is LATAM-heavy (`evahsaude.com.br` suggests so), `sa-east-1` may be better. Picked in `envs/prod/terraform.tfvars`, easy to change before apply.
-2. **Domain & TLS:** ALB needs a cert. Assumed ACM cert provisioned out-of-band; spec leaves the ARN as a `terraform.tfvars` input rather than provisioning it inline.
-3. **HMAC webhook secret distribution:** today `OM_WEBHOOK_SECRETS` is plaintext env. In ECS it would go into Secrets Manager same as `OM_API_KEY`. Same pattern, no architectural decision needed — flagged here so it's not forgotten in the plan.
+Things that don't block this work but do block actual deployment. The Terraform exposes each one as a `variable` with no default (or a documented placeholder), so `terraform plan` runs but `apply` fails fast if anything is missing. All are listed in the operator runbook (PR 5).
 
-These do not block the spec. They are the first questions the implementation plan will pin down.
+1. **Region:** spec assumes `us-east-1` to match the existing S3 default. If prod traffic is LATAM-heavy (`evahsaude.com.br` suggests so), `sa-east-1` may be better. Set in `envs/<env>/terraform.tfvars` at apply time.
+2. **Domain & TLS:** ALB needs an ACM cert ARN. Assumed provisioned out-of-band; passed in via `terraform.tfvars`.
+3. **HMAC webhook secret distribution:** today `OM_WEBHOOK_SECRETS` is plaintext env. In ECS it goes into Secrets Manager same as `OM_API_KEY`. Same pattern as the other secrets — included in the `secrets` module so it's not forgotten.
+4. **RDS sizing:** dev uses `db.t4g.small` single-AZ; prod placeholder is `db.t4g.medium` Multi-AZ. Operator confirms or changes at apply time based on actual load expectations.
+5. **API min/max replicas:** dev defaults to 2..4, prod placeholder 2..10. Tuned post-deploy from real traffic.
+6. **State backend bucket + DynamoDB lock table:** must exist before `terraform init` works. Bootstrap procedure is in the runbook.
