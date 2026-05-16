@@ -91,7 +91,12 @@ if (env.mode === "langgraph") {
     console.log("[MODE] LangGraph integration enabled");
 }
 
-start_background_jobs();
+if (env.bg_jobs !== "off") {
+    console.log(`[BG_JOBS] Mode=${env.bg_jobs} — starting background jobs`);
+    start_background_jobs();
+} else {
+    console.log(`[BG_JOBS] Mode=off — skipping background jobs (API replica)`);
+}
 
 console.log(`[SERVER] Starting on port ${env.port}`);
 app.listen(env.port, () => {
