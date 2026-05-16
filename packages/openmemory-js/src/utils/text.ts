@@ -1,24 +1,13 @@
 import crypto from "node:crypto";
+import { env } from "../core/cfg";
+import { getLangPack } from "../i18n";
 
-const syn_grps = [
-    ["prefer", "like", "love", "enjoy", "favor"],
-    ["theme", "mode", "style", "layout"],
-    ["meeting", "meet", "session", "call", "sync"],
-    ["dark", "night", "black"],
-    ["light", "bright", "day"],
-    ["user", "person", "people", "customer"],
-    ["task", "todo", "job"],
-    ["note", "memo", "reminder"],
-    ["time", "schedule", "when", "date"],
-    ["project", "initiative", "plan"],
-    ["issue", "problem", "bug"],
-    ["document", "doc", "file"],
-    ["question", "query", "ask"],
-];
+const lang_pack = getLangPack(env.lang, env.domain);
+
 const cmap = new Map<string, string>();
 const slook = new Map<string, Set<string>>();
 
-for (const grp of syn_grps) {
+for (const grp of lang_pack.synonymGroups) {
     const can = grp[0];
     const sset = new Set(grp);
     for (const w of grp) {
@@ -27,17 +16,10 @@ for (const grp of syn_grps) {
     }
 }
 
-const stem_rules: Array<[RegExp, string]> = [
-    [/ies$/, "y"],
-    [/ing$/, ""],
-    [/ers?$/, "er"],
-    [/ed$/, ""],
-    [/s$/, ""],
-];
 const cjk_pat =
-    /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+/u;
+    /[㐀-䶿一-鿿豈-﫿぀-ヿ가-힯]+/u;
 const tok_pat =
-    /[a-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+/giu;
+    /[a-z0-9]+|[㐀-䶿一-鿿豈-﫿぀-ヿ가-힯]+/giu;
 
 const expand_cjk_token = (tok: string): string[] => {
     if (tok.length <= 1) return [tok];
@@ -63,14 +45,8 @@ export const tokenize = (text: string): string[] => {
 };
 
 const stem = (tok: string): string => {
-    if (tok.length <= 3) return tok;
-    for (const [pat, rep] of stem_rules) {
-        if (pat.test(tok)) {
-            const st = tok.replace(pat, rep);
-            if (st.length >= 3) return st;
-        }
-    }
-    return tok;
+    if (!lang_pack.shouldStem(tok)) return tok;
+    return lang_pack.stem(tok);
 };
 
 export const canonicalize_token = (tok: string): string => {

@@ -24,5 +24,11 @@ dependencies = [
     "openai>=1.0",
 ]
 
+[project.optional-dependencies]
+# Portuguese language pack with lemmatization (spaCy + pt_core_news_sm).
+# After install, download the model once:
+#   python -m spacy download pt_core_news_sm
+pt = ["spacy>=3.7"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/openmemory"]

@@ -3,6 +3,9 @@ import { canonical_token_set, stable_text_fallback_hash } from "../utils/text";
 import { inc_q, dec_q, on_query_hit } from "./decay";
 import { env, tier } from "../core/cfg";
 import { cos_sim, buf_to_vec, vec_to_buf } from "../utils/index";
+import { getLangPack } from "../i18n";
+
+const lang_pack = getLangPack(env.lang, env.domain);
 export interface sector_cfg {
     model: string;
     decay_lambda: number;
@@ -47,74 +50,20 @@ export interface hsg_q_result {
     tags?: string[];
     meta?: any;
 }
+const sector_meta: Record<string, Omit<sector_cfg, "patterns">> = {
+    episodic: { model: "episodic-optimized", decay_lambda: 0.015, weight: 1.2 },
+    semantic: { model: "semantic-optimized", decay_lambda: 0.005, weight: 1.0 },
+    procedural: { model: "procedural-optimized", decay_lambda: 0.008, weight: 1.1 },
+    emotional: { model: "emotional-optimized", decay_lambda: 0.02, weight: 1.3 },
+    reflective: { model: "reflective-optimized", decay_lambda: 0.001, weight: 0.8 },
+};
+
 export const sector_configs: Record<string, sector_cfg> = {
-    episodic: {
-        model: "episodic-optimized",
-        decay_lambda: 0.015,
-        weight: 1.2,
-        patterns: [
-            /\b(today|yesterday|tomorrow|last\s+(week|month|year)|next\s+(week|month|year))\b/i,
-            /\b(remember\s+when|recall|that\s+time|when\s+I|I\s+was|we\s+were)\b/i,
-            /\b(went|saw|met|felt|heard|visited|attended|participated)\b/i,
-            /\b(at\s+\d{1,2}:\d{2}|on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i,
-            /\b(event|moment|experience|incident|occurrence|happened)\b/i,
-            /\bI\s+'?m\s+going\s+to\b/i,
-        ],
-    },
-    semantic: {
-        model: "semantic-optimized",
-        decay_lambda: 0.005,
-        weight: 1.0,
-        patterns: [
-            /\b(is\s+a|represents|means|stands\s+for|defined\s+as)\b/i,
-            /\b(concept|theory|principle|law|hypothesis|theorem|axiom)\b/i,
-            /\b(fact|statistic|data|evidence|proof|research|study|report)\b/i,
-            /\b(capital|population|distance|weight|height|width|depth)\b/i,
-            /\b(history|science|geography|math|physics|biology|chemistry)\b/i,
-            /\b(know|understand|learn|read|write|speak)\b/i,
-        ],
-    },
-    procedural: {
-        model: "procedural-optimized",
-        decay_lambda: 0.008,
-        weight: 1.1,
-        patterns: [
-            /\b(how\s+to|step\s+by\s+step|guide|tutorial|manual|instructions)\b/i,
-            /\b(first|second|then|next|finally|afterwards|lastly)\b/i,
-            /\b(install|run|execute|compile|build|deploy|configure|setup)\b/i,
-            /\b(click|press|type|enter|select|drag|drop|scroll)\b/i,
-            /\b(method|function|class|algorithm|routine|recipie)\b/i,
-            /\b(to\s+do|to\s+make|to\s+build|to\s+create)\b/i,
-        ],
-    },
-    emotional: {
-        model: "emotional-optimized",
-        decay_lambda: 0.02,
-        weight: 1.3,
-        patterns: [
-            /\b(feel|feeling|felt|emotions?|mood|vibe)\b/i,
-            /\b(happy|sad|angry|mad|excited|scared|anxious|nervous|depressed)\b/i,
-            /\b(love|hate|like|dislike|adore|detest|enjoy|loathe)\b/i,
-            /\b(amazing|terrible|awesome|awful|wonderful|horrible|great|bad)\b/i,
-            /\b(frustrated|confused|overwhelmed|stressed|relaxed|calm)\b/i,
-            /\b(wow|omg|yay|nooo|ugh|sigh)\b/i,
-            /[!]{2,}/,
-        ],
-    },
-    reflective: {
-        model: "reflective-optimized",
-        decay_lambda: 0.001,
-        weight: 0.8,
-        patterns: [
-            /\b(realize|realized|realization|insight|epiphany)\b/i,
-            /\b(think|thought|thinking|ponder|contemplate|reflect)\b/i,
-            /\b(understand|understood|understanding|grasp|comprehend)\b/i,
-            /\b(pattern|trend|connection|link|relationship|correlation)\b/i,
-            /\b(lesson|moral|takeaway|conclusion|summary|implication)\b/i,
-            /\b(feedback|review|analysis|evaluation|assessment)\b/i,
-            /\b(improve|grow|change|adapt|evolve)\b/i,
-        ],
-    },
+    episodic: { ...sector_meta.episodic, patterns: lang_pack.sectorPatterns.episodic },
+    semantic: { ...sector_meta.semantic, patterns: lang_pack.sectorPatterns.semantic },
+    procedural: { ...sector_meta.procedural, patterns: lang_pack.sectorPatterns.procedural },
+    emotional: { ...sector_meta.emotional, patterns: lang_pack.sectorPatterns.emotional },
+    reflective: { ...sector_meta.reflective, patterns: lang_pack.sectorPatterns.reflective },
 };
 export const sectors = Object.keys(sector_configs);
 export const scoring_weights = {
@@ -177,14 +126,7 @@ export const sector_relationships: Record<string, Record<string, number>> = {
 };
 
 function has_temporal_markers(text: string): boolean {
-    const temporal_patterns = [
-        /\b(today|yesterday|tomorrow|this\s+week|last\s+week|this\s+morning)\b/i,
-        /\b\d{4}-\d{2}-\d{2}\b/,
-        /\b20\d{2}[/-]?(0[1-9]|1[0-2])[/-]?(0[1-9]|[12]\d|3[01])\b/,
-        /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}/i,
-        /\bwhat\s+(did|have)\s+(i|we)\s+(do|done)\b/i,
-    ];
-    return temporal_patterns.some((p) => p.test(text));
+    return lang_pack.temporalPatterns.some((p) => p.test(text));
 }
 
 async function compute_tag_match_score(
@@ -389,23 +331,13 @@ export function extract_essence(
         if (/^[A-Z][a-z]+:/i.test(s)) sc += 6;
 
         if (/\d{4}-\d{2}-\d{2}/.test(s)) sc += 7;
-        if (
-            /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d+/i.test(
-                s,
-            )
-        )
-            sc += 5;
-        if (/\$\d+|\d+\s*(miles|dollars|years|months|km)/.test(s)) sc += 4;
+        if (lang_pack.importance.months.test(s)) sc += 5;
+        if (lang_pack.importance.units.test(s)) sc += 4;
         if (/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/.test(s)) sc += 3;
-        if (
-            /\b(bought|purchased|serviced|visited|went|got|received|paid|earned|learned|discovered|found|saw|met|completed|finished|fixed|implemented|created|updated|added|removed|resolved)\b/i.test(
-                s,
-            )
-        )
-            sc += 4;
-        if (/\b(who|what|when|where|why|how)\b/i.test(s)) sc += 2;
+        if (lang_pack.importance.actionVerbs.test(s)) sc += 4;
+        if (lang_pack.importance.wh.test(s)) sc += 2;
         if (s.length < 80) sc += 2;
-        if (/\b(I|my|me)\b/.test(s)) sc += 1;
+        if (lang_pack.importance.selfRefs.test(s)) sc += 1;
         return sc;
     };
     const scored = sents.map((s, idx) => ({
@@ -1210,7 +1142,9 @@ export async function add_hsg_memory(
             all_sectors,
             use_chunking ? chunks : undefined,
         );
+        console.error(`[HSG] add_memory: embedMultiSector returned ${emb_res.length} vectors. Proceeding to store...`);
         for (const result of emb_res) {
+            console.error(`[HSG] Storing vector for sector: ${result.sector} (dim: ${result.dim})...`);
             await vector_store.storeVector(
                 id,
                 result.sector,
@@ -1220,6 +1154,7 @@ export async function add_hsg_memory(
                 project_id || undefined,
             );
         }
+        console.error(`[HSG] add_memory: Successfully stored vectors in vector database.`);
         const mean_vec = calc_mean_vec(emb_res, all_sectors);
         const mean_vec_buf = vectorToBuffer(mean_vec);
         await q.upd_mean_vec.run(id, mean_vec.length, mean_vec_buf);
@@ -1296,15 +1231,18 @@ export async function update_memory(
                 all_sectors,
                 use_chunking ? chunks : undefined,
             );
+            console.error(`[HSG] update_memory: embedMultiSector returned ${emb_res.length} vectors. Proceeding to store...`);
             for (const result of emb_res) {
+                console.error(`[HSG] Storing vector for sector: ${result.sector} (dim: ${result.dim})...`);
                 await vector_store.storeVector(
                     id,
                     result.sector,
                     result.vector,
                     result.dim,
-                    mem.user_id || "anonymous",
+                    mem.user_id,
                 );
             }
+            console.error(`[HSG] update_memory: Successfully stored vectors in vector database.`);
             const mean_vec = calc_mean_vec(emb_res, all_sectors);
             const mean_vec_buf = vectorToBuffer(mean_vec);
             await q.upd_mean_vec.run(id, mean_vec.length, mean_vec_buf);

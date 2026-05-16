@@ -11,6 +11,9 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from ..core.db import q, db, transaction
 from ..core.config import env
 from ..core.constants import SECTOR_CONFIGS
+from ..i18n import get_lang_pack
+
+_LANG_PACK = get_lang_pack(env.lang, env.domain)
 from ..core.vector_store import vector_store as store
 from ..utils.text import canonical_token_set, canonical_tokens_from_text, stable_text_fallback_hash
 from ..utils.chunking import chunk_text
@@ -68,14 +71,7 @@ async def embed_query_for_all_sectors(query: str, sectors: List[str]) -> Dict[st
     return res
 
 def has_temporal_markers(text: str) -> bool:
-    pats = [
-        r"\b(today|yesterday|tomorrow|this\s+week|last\s+week|this\s+morning)\b",
-        r"\b\d{4}-\d{2}-\d{2}\b",
-        r"\b20\d{2}[/-]?(0[1-9]|1[0-2])[/-]?(0[1-9]|[12]\d|3[01])\b",
-        r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}",
-        r"\bwhat\s+(did|have)\s+(i|we)\s+(do|done)\b",
-    ]
-    return any(re.search(p, text, re.I) for p in pats)
+    return any(p.search(text) for p in _LANG_PACK.temporal_patterns)
 
 async def compute_tag_match_score(mid: str, q_toks: Set[str]) -> float:
     mem = q.get_mem(mid)
@@ -223,13 +219,13 @@ def extract_essence(raw: str, sec: str, max_len: int) -> str:
         #if re.match(r"^#+\s", s) or re.match(r"^[A-Z][A-Z\s]+:", s): sc += 8
         if re.match(r"^[A-Z][a-z]+:", s): sc += 6
         if re.search(r"\d{4}-\d{2}-\d{2}", s): sc += 7
-        if re.search(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d+", s, re.I): sc += 5
-        if re.search(r"\$\d+|\d+\s*(miles|dollars|years|months|km)", s): sc += 4
+        if _LANG_PACK.importance.months.search(s): sc += 5
+        if _LANG_PACK.importance.units.search(s): sc += 4
         if re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", s): sc += 3
-        if re.search(r"\b(bought|purchased|serviced|visited|went|got|received|paid|earned|learned|discovered|found|saw|met|completed|finished|fixed|implemented|created|updated|added|removed|resolved)\b", s, re.I): sc += 4
-        if re.search(r"\b(who|what|when|where|why|how)\b", s, re.I): sc += 2
+        if _LANG_PACK.importance.action_verbs.search(s): sc += 4
+        if _LANG_PACK.importance.wh.search(s): sc += 2
         if len(s) < 80: sc += 2
-        if re.search(r"\b(I|my|me)\b", s): sc += 1
+        if _LANG_PACK.importance.self_refs.search(s): sc += 1
         scored.append({"text": s, "score": sc, "idx": idx})
 
     scored.sort(key=lambda x: x["score"], reverse=True)

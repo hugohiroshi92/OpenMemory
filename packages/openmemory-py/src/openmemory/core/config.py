@@ -68,6 +68,10 @@ class EnvConfig:
         self.minimax_model = get("ai", "minimax_model", "OM_MINIMAX_MODEL", None)
         self.minimax_embedding_model = os.getenv("OM_MINIMAX_EMBEDDING_MODEL")
 
+        self.lang = (get("i18n", "lang", "OM_LANG", "en") or "en").lower()
+        _domain = get("i18n", "domain", "OM_DOMAIN", None)
+        self.domain = _domain.lower() if _domain else None
+
         self.vec_dim = int(num(os.getenv("OM_VEC_DIM"), 1536))
         self.min_score = num(os.getenv("OM_MIN_SCORE"), 0.3)
         self.keyword_boost = num(os.getenv("OM_KEYWORD_BOOST"), 2.5)

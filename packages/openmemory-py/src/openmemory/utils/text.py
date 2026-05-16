@@ -2,41 +2,24 @@ import re
 import hashlib
 from typing import List, Set, Dict
 
-SYN_GRPS = [
-    ["prefer", "like", "love", "enjoy", "favor"],
-    ["theme", "mode", "style", "layout"],
-    ["meeting", "meet", "session", "call", "sync"],
-    ["dark", "night", "black"],
-    ["light", "bright", "day"],
-    ["user", "person", "people", "customer"],
-    ["task", "todo", "job"],
-    ["note", "memo", "reminder"],
-    ["time", "schedule", "when", "date"],
-    ["project", "initiative", "plan"],
-    ["issue", "problem", "bug"],
-    ["document", "doc", "file"],
-    ["question", "query", "ask"],
-]
+from ..core.config import env
+from ..i18n import get_lang_pack
+
+
+_LANG_PACK = get_lang_pack(env.lang, env.domain)
 
 CMAP: Dict[str, str] = {}
 SLOOK: Dict[str, Set[str]] = {}
 
-for grp in SYN_GRPS:
+for grp in _LANG_PACK.synonym_groups:
     can = grp[0]
     sset = set(grp)
     for w in grp:
         CMAP[w] = can
         SLOOK[can] = sset
 
-STEM_RULES = [
-    (r"ies$", "y"),
-    (r"ing$", ""),
-    (r"ers?$", "er"),
-    (r"ed$", ""),
-    (r"s$", ""),
-]
 
-CJK_PAT = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af"
+CJK_PAT = r"㐀-䶿一-鿿豈-﫿぀-ヿ가-힯"
 TOK_PAT = re.compile(rf"[a-z0-9]+|[{CJK_PAT}]+", re.I)
 
 
@@ -44,6 +27,7 @@ def _expand_cjk_token(tok: str) -> List[str]:
     if len(tok) <= 1:
         return [tok]
     return [tok[i : i + 2] for i in range(len(tok) - 1)]
+
 
 def tokenize(text: str) -> List[str]:
     res: List[str] = []
@@ -55,20 +39,22 @@ def tokenize(text: str) -> List[str]:
             res.append(low)
     return res
 
+
 def stem(tok: str) -> str:
-    if len(tok) <= 3: return tok
-    for pat, rep in STEM_RULES:
-        if re.search(pat, tok):
-            st = re.sub(pat, rep, tok)
-            if len(st) >= 3: return st
-    return tok
+    if not _LANG_PACK.should_stem(tok):
+        return tok
+    return _LANG_PACK.stem(tok)
+
 
 def canonicalize_token(tok: str) -> str:
-    if not tok: return ""
+    if not tok:
+        return ""
     low = tok.lower()
-    if low in CMAP: return CMAP[low]
+    if low in CMAP:
+        return CMAP[low]
     st = stem(low)
     return CMAP.get(st, st)
+
 
 def canonical_tokens_from_text(text: str) -> List[str]:
     res = []
@@ -78,9 +64,11 @@ def canonical_tokens_from_text(text: str) -> List[str]:
             res.append(can)
     return res
 
+
 def synonyms_for(tok: str) -> Set[str]:
     can = canonicalize_token(tok)
     return SLOOK.get(can, {can})
+
 
 def build_search_doc(text: str) -> str:
     can = canonical_tokens_from_text(text)
@@ -92,11 +80,14 @@ def build_search_doc(text: str) -> str:
             exp.update(syns)
     return " ".join(exp)
 
+
 def build_fts_query(text: str) -> str:
     can = canonical_tokens_from_text(text)
-    if not can: return ""
+    if not can:
+        return ""
     uniq = sorted(list(set(t for t in can if len(t) > 1)))
     return " OR ".join(f'"{t}"' for t in uniq)
+
 
 def canonical_token_set(text: str) -> Set[str]:
     return set(canonical_tokens_from_text(text))

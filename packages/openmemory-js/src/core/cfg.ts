@@ -42,6 +42,10 @@ export const env = {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+    lang: str(process.env.OM_LANG, "en").toLowerCase(),
+    domain: process.env.OM_DOMAIN
+        ? process.env.OM_DOMAIN.toLowerCase()
+        : null,
     embed_mode: str(process.env.OM_EMBED_MODE, "simple"),
     adv_embed_parallel: bool(process.env.OM_ADV_EMBED_PARALLEL),
     embed_delay_ms: num(process.env.OM_EMBED_DELAY_MS, 200),
