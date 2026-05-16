@@ -10,6 +10,7 @@ services:
       # Core Configuration
       - OM_PORT=${OM_PORT:-8080}
       - OM_MODE=${OM_MODE:-standard}
+      - OM_BG_JOBS=${OM_BG_JOBS:-api}
       - OM_TIER=${OM_TIER:-hybrid}
       - OM_DB_PATH=${OM_DB_PATH:-/data/openmemory.sqlite}
       - OM_API_KEY=${OM_API_KEY:-}
@@ -177,6 +178,41 @@ services:
   #   restart: unless-stopped
   #   healthcheck:
   #     test: ['CMD', 'valkey-cli', 'ping']
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
+
+  # Optional: dedicated background-jobs worker — mirrors the planned
+  # ECS split (one API service + one worker singleton). Uncomment to
+  # run decay/prune/reflection in a separate container locally.
+  # Set OM_BG_JOBS=off on the openmemory service when using this.
+  #
+  # openmemory-worker:
+  #   build:
+  #     context: ./packages/openmemory-js
+  #     dockerfile: Dockerfile
+  #   env_file: .env
+  #   environment:
+  #     - OM_BG_JOBS=worker
+  #     - OM_PORT=8080
+  #     - OM_METADATA_BACKEND=${OM_METADATA_BACKEND:-sqlite}
+  #     - OM_VECTOR_BACKEND=${OM_VECTOR_BACKEND:-sqlite}
+  #     - OM_DB_PATH=${OM_DB_PATH:-/data/openmemory.sqlite}
+  #     # Mirror any provider keys the API service uses
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+  #   volumes:
+  #     - openmemory_data:/data
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test:
+  #       [
+  #         'CMD',
+  #         'node',
+  #         '-e',
+  #         'require("http").get("http://localhost:8080/health",(res)=>process.exit(res.statusCode===200?0:1)).on("error",()=>process.exit(1))',
+  #       ]
   #     interval: 30s
   #     timeout: 10s
   #     retries: 3
