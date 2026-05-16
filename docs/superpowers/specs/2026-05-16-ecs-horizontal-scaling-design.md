@@ -11,15 +11,14 @@
 
 Prepare the OpenMemory JS server (port 8080) to run horizontally on AWS ECS Fargate, with N stateless API replicas behind an Application Load Balancer (ALB) and a separate singleton worker container for background jobs. All shared state would live in managed services (RDS Postgres for metadata, S3 Vectors for vectors).
 
-**Scope clarification:** the deliverable is *deployable artifacts* — code changes + Terraform — not an active AWS deployment. No `terraform apply` against real AWS happens as part of this work. The Terraform must validate (`terraform init && terraform validate && terraform plan` against a dummy state) and the code must run locally, but actual cluster provisioning and cutover are explicitly deferred to whenever the project decides to flip the switch.
+**Scope clarification (revised 2026-05-16):** the deliverables in *this* repo are (a) the application code changes that make horizontal scaling safe, and (b) the deployment documentation. The Terraform / infrastructure code is **handled in a separate project**, not in this repo — this spec documents the operational shape that the external Terraform must implement, but no Terraform files are committed here.
 
-The prepared artifacts must:
+The deliverables in this repo must:
 
 - Scale API replicas by CPU/RPS without breaking decay, prune, reflection, or user-summary jobs *when* eventually deployed.
 - Stay compatible with the existing public HTTP/MCP API and the local `docker-compose.yml` workflow.
 - Keep the change surface in the product code minimal — the scaling-aware logic is a single new env var (`OM_BG_JOBS`) plus an early-return in `src/server/index.ts`.
-- Ship Terraform under `infra/terraform/` so the AWS topology is reviewable in PRs and applyable on demand.
-- Include a `README.md` in `infra/terraform/` documenting prerequisites, the apply sequence, and what to decide at apply time (region, ACM cert, RDS sizing).
+- Document the deployment shape (env vars, IAM, secrets, networking, observability) in `docs/ecs-deployment.md` so the external Terraform project has an unambiguous contract to implement against.
 
 ## 2. Non-goals
 
@@ -186,99 +185,72 @@ if (env.bg_jobs === "worker") {
 - Add a vitest spec (`tests/bg_jobs_mode.test.ts`) that imports `cfg` with `OM_BG_JOBS=worker`/`off`/`api` and asserts the parsed value
 - Smoke-style integration test is **out of scope** for this spec — the gating logic in `index.ts` is straightforward enough that the env-var unit test plus manual deploy verification covers it
 
-## 6. Infrastructure (Terraform)
+## 6. Infrastructure (handled in an external Terraform project)
 
-Layout under `infra/terraform/`:
+The Terraform that provisions all of this lives in a **separate project**, not in this repo. The shape it must implement is captured here for design context and is fully expanded — with concrete env var names, secret keys, IAM actions, and network rules — in [`docs/ecs-deployment.md`](../../ecs-deployment.md).
+
+Suggested module layout for the external project (illustrative, the team owning the Terraform decides the final shape):
 
 ```
-infra/terraform/
-├── README.md                  # how to apply, prerequisites
-├── envs/
-│   ├── dev/
-│   │   ├── main.tf            # composes modules, sets dev-specific values
-│   │   ├── variables.tf
-│   │   └── terraform.tfvars   # gitignored if it contains secrets; .example committed
-│   └── prod/                  # same shape as dev
-└── modules/
-    ├── network/               # VPC, subnets, NAT, security groups
-    ├── ecr/                   # repo + lifecycle policy
-    ├── rds/                   # Postgres instance + parameter group + subnet group
-    ├── secrets/               # Secrets Manager entries
-    ├── ecs_cluster/           # cluster, IAM exec role, IAM task roles (api, worker)
-    ├── ecs_api/               # task def + service + ALB target group + autoscaling
-    ├── ecs_worker/            # task def + service (no ALB)
-    └── alb/                   # ALB + listener + cert
+modules/
+├── network/      # VPC, subnets, NAT, security groups
+├── ecr/          # repo + lifecycle policy
+├── rds/          # Postgres instance + parameter group + subnet group
+├── secrets/      # Secrets Manager entries (4: api-key, db, embeddings, webhook)
+├── ecs_cluster/  # cluster, IAM exec role, IAM task roles (api, worker — separate)
+├── ecs_api/      # task def + service + ALB target group + autoscaling
+├── ecs_worker/   # task def + service (singleton, no ALB)
+└── alb/          # ALB + listener + cert
 ```
 
-**Module boundaries chosen so each module owns one AWS-level concept.** `ecs_api` and `ecs_worker` share the underlying image but differ in env, count, and ALB attachment — keeping them separate keeps each module focused and avoids the "one mega-module with bool toggles" pattern that gets unreadable fast.
+The reasoning behind `ecs_api` and `ecs_worker` as separate modules (rather than one parameterized module): they share the underlying image but differ meaningfully in env, count, ALB attachment, and deployment strategy — keeping them separate keeps each module focused.
 
-State backend: S3 + DynamoDB lock table. Bucket name configurable via `terraform.tfvars`.
+### 6.1 IAM (summary; see ecs-deployment.md §5 for actions)
 
-### 6.1 IAM
+Three roles total:
+- **`openmemory-api-task-role`** — R/W to S3 Vectors index. Nothing else.
+- **`openmemory-worker-task-role`** — identical policy to api, kept as a separate role so the two can diverge later without coupled changes.
+- **Task execution role (shared)** — ECR pull, CloudWatch Logs write, Secrets Manager read.
 
-Two task roles, narrowly scoped:
+### 6.2 Secrets Manager entries (4 total; see ecs-deployment.md §4)
 
-- **`openmemory-api-task-role`**: read from Secrets Manager (DB creds, API key), R/W to S3 Vectors bucket+index, no other AWS access
-- **`openmemory-worker-task-role`**: same as API role (worker hits the same resources)
+`openmemory/api-key`, `openmemory/db`, `openmemory/embeddings`, `openmemory/webhook` (last one only if HMAC webhooks are wired).
 
-The ECS execution role (separate from task role) gets pull access to ECR and write access to CloudWatch Logs.
+### 6.3 Networking (see ecs-deployment.md §6 for the full table)
 
-### 6.2 Secrets Manager entries
+1 VPC, 2 private + 2 public subnets, 4 security groups (ALB, API, Worker, RDS), VPC endpoints for ECR/S3/Secrets/Logs/S3-Vectors.
 
-| Secret name | Contents |
-|-------------|----------|
-| `openmemory/db` | JSON: `{username, password, host, port, dbname}` — RDS master creds |
-| `openmemory/api-key` | `OM_API_KEY` value |
-| `openmemory/embeddings` | JSON with `OPENAI_API_KEY`, `OM_GEMINI_API_KEY`, etc. — whichever providers are active |
+### 6.4 Observability (see ecs-deployment.md §8)
 
-Task definitions reference these via `secrets` (mapped to env vars at container start).
-
-### 6.3 Networking
-
-- 1 VPC, 2 private subnets (one per AZ), 2 public subnets (for ALB + NAT)
-- Security groups:
-  - ALB SG: 443 from 0.0.0.0/0
-  - API task SG: 8080 from ALB SG only
-  - Worker task SG: no inbound (egress only)
-  - RDS SG: 5432 from API SG and Worker SG
-- VPC endpoints for ECR, S3, Secrets Manager, CloudWatch Logs (avoids NAT egress charges for AWS API traffic)
-
-### 6.4 Observability
-
-- CloudWatch Logs groups: `/ecs/openmemory-api` and `/ecs/openmemory-worker`, retention 30 days
-- ALB access logs to a dedicated S3 bucket, 30-day lifecycle
-- Container Insights enabled on the cluster (CPU/memory/network metrics per service)
-- Alarms (CloudWatch):
-  - API 5xx rate > 1% over 5 min
-  - API task CPU > 80% sustained 10 min (signals autoscale gap)
-  - Worker desiredCount != runningCount for > 10 min (singleton health)
-  - RDS connections > 80% of max
+CloudWatch Logs (30 days retention), ALB access logs to S3, Container Insights, 5 recommended alarms (API 5xx, API CPU, Worker singleton health, RDS connections, ALB target unhealthy).
 
 ## 7. Delivery phases (what this work produces)
 
-The work is split into PRs each independently mergeable. **No AWS apply happens in any of these phases** — the Terraform is written, validated locally, and committed. Actual `terraform apply` is a separate decision made by the operator when the project is ready to deploy.
+Revised scope: only the code and the deployment documentation are produced in this repo. The Terraform is built in a separate project and is not part of this effort.
 
-1. **Code change (PR 1):** add `OM_BG_JOBS` flag and the `index.ts` gating. Update `docker-compose.yml`. Land vitest spec. Defaults preserve current behavior — this PR is mergeable on its own with no infra. Verified by: `npm run typecheck`, `npm test`, manual `docker compose up` with each `OM_BG_JOBS` value.
-2. **Terraform foundation (PR 2):** `network`, `ecr`, `rds`, `secrets`, `alb` modules + dev env wiring. Verified by: `terraform fmt -check`, `terraform init` (with local backend for review), `terraform validate`, `terraform plan` against a placeholder tfvars.
-3. **Terraform services (PR 3):** `ecs_cluster`, `ecs_api`, `ecs_worker` modules. Verified by: `terraform validate` and `terraform plan` showing the expected resource graph (ALB + 2 services + 2 task defs + autoscaling target).
-4. **Prod env scaffolding (PR 4):** clone the dev env folder into a `prod/` env with prod-shaped values (Multi-AZ RDS, larger API min/max, longer log retention). `terraform plan`-clean. Tfvars stay as `.example` files — the real prod values are filled in at apply time.
-5. **Operator runbook (PR 5):** `infra/terraform/README.md` covering: AWS prerequisites (Route53 zone, ACM cert, S3 state bucket, DynamoDB lock table), the apply order, the open decisions from §9, and the rollback procedure. This is the document the operator reads when they decide to actually deploy.
+1. **Code change (PR 1) — DONE:** added `OM_BG_JOBS` flag, extracted `bg_jobs.ts`, gated the loops, added worker mode, updated `docker-compose.yml`, added a CLAUDE.md handbook entry. Branch: `feat/ecs-bg-jobs`. Verified by: `npm run typecheck`, `npm test` (60/60), manual smoke for all three modes via `npx tsx`.
+2. **Deployment documentation (this PR / follow-up):** `docs/ecs-deployment.md` — operator-facing deployment guide. Covers the architecture, container image, two task definitions (env vars + secrets + IAM), Secrets Manager layout, networking, ECS service configuration (including the singleton worker invariants), observability, health checks, DB bootstrap, decide-at-apply-time items, rollback, and known operational notes.
 
-**Definition of done for this whole effort:**
-- All 5 PRs merged
-- `terraform plan` clean in `envs/dev` and `envs/prod` against placeholder tfvars
-- Local `docker compose up` still works exactly as before for someone who clones the repo today
-- `npm test` and `npm run typecheck` green in `packages/openmemory-js`
+**What is NOT in this repo and lives in the external Terraform project:**
 
-**Out of this effort but documented for whoever runs the apply later:**
-- Creating the AWS account, IAM bootstrap user, S3 state bucket, DynamoDB lock table
-- Provisioning the ACM cert, Route53 zone, VPC peering (if any)
-- Running `terraform apply` against real environments
+- All Terraform modules (network, ECR, RDS, ECS cluster, ECS services, ALB, Secrets, IAM)
+- The state backend (S3 + DynamoDB lock) bootstrap
+- AWS account setup, Route53 zone, ACM cert provisioning
+- Any `terraform apply` against real environments
 - Smoke tests against a live ALB
 - DNS cutover
-- Cost monitoring setup beyond what Terraform provisions
+- Production cost monitoring beyond what Terraform provisions
 
-Rollback for any merged PR is a `git revert`. There is no live state to roll back because nothing was applied.
+The external Terraform project should treat `docs/ecs-deployment.md` as its requirements document — every env var, secret, IAM action, network rule, and service-deployment parameter the application needs is enumerated there.
+
+**Definition of done for this repo:**
+
+- Code PR 1 merged ✅
+- `docs/ecs-deployment.md` merged
+- Local `docker compose up` still works exactly as before for someone who clones the repo today ✅
+- `npm test` and `npm run typecheck` green in `packages/openmemory-js` ✅
+
+Rollback for any merged PR in this repo is a `git revert`. There is no live AWS state to roll back from this repo.
 
 ## 8. Risks & mitigations
 
